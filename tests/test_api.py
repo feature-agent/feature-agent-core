@@ -1,5 +1,7 @@
 """API endpoint tests."""
 
+import json
+
 import pytest
 
 from agent.storage.local_volume import LocalVolumeStorage
@@ -173,4 +175,60 @@ async def test_get_task_by_id(async_client):
 async def test_get_task_not_found_returns_404(async_client):
     """GET /api/tasks/{task_id} returns 404 for unknown ID."""
     response = await async_client.get("/api/tasks/nonexist")
+    assert response.status_code == 404
+
+
+# --- Phase 3: SSE streaming tests ---
+
+@pytest.mark.asyncio
+async def test_stream_returns_200_with_correct_content_type(async_client):
+    """GET /api/stream/{task_id} returns 200 with text/event-stream."""
+    create_resp = await async_client.post("/api/tasks", json={
+        "task_description": "Stream test",
+        "target_repo": "owner/repo",
+    })
+    task_id = create_resp.json()["task_id"]
+
+    # Emit a terminal event so the stream ends
+    import agent.main as main_module
+    await main_module.event_emitter.emit(task_id, "task_done", pr_url="", pr_number=0, elapsed_ms=0)
+
+    async with async_client.stream("GET", f"/api/stream/{task_id}") as response:
+        assert response.status_code == 200
+        assert "text/event-stream" in response.headers["content-type"]
+
+
+@pytest.mark.asyncio
+async def test_stream_replays_existing_events(async_client):
+    """GET /api/stream/{task_id} replays stored events."""
+    create_resp = await async_client.post("/api/tasks", json={
+        "task_description": "Replay test",
+        "target_repo": "owner/repo",
+    })
+    task_id = create_resp.json()["task_id"]
+
+    # Store some events before connecting
+    import agent.main as main_module
+    await main_module.event_emitter.emit(task_id, "task_start")
+    await main_module.event_emitter.emit(task_id, "skill_start", skill="issue_reader", skill_index=1, skill_total=7, message="Reading...")
+    await main_module.event_emitter.emit(task_id, "task_done", pr_url="https://github.com/test/pr/1", pr_number=1, elapsed_ms=1000)
+
+    # Connect and read all replayed events
+    events = []
+    async with async_client.stream("GET", f"/api/stream/{task_id}") as response:
+        async for line in response.aiter_lines():
+            if line.startswith("data: "):
+                event = json.loads(line[6:])
+                events.append(event)
+
+    assert len(events) >= 3
+    assert events[0]["type"] == "task_start"
+    assert events[1]["type"] == "skill_start"
+    assert events[2]["type"] == "task_done"
+
+
+@pytest.mark.asyncio
+async def test_stream_404_for_unknown_task(async_client):
+    """GET /api/stream/{task_id} returns 404 for non-existent task."""
+    response = await async_client.get("/api/stream/nonexist")
     assert response.status_code == 404
