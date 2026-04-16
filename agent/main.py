@@ -6,8 +6,8 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from agent.config import settings
@@ -54,14 +54,27 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Catch unhandled exceptions and return a safe 500 response."""
+    logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+    )
+
+
 # Register API routers
 from agent.api.routes.tasks import router as tasks_router  # noqa: E402
 from agent.api.routes.stream import router as stream_router  # noqa: E402
 from agent.api.routes.clarify import router as clarify_router  # noqa: E402
+from agent.api.routes.benchmarks import router as benchmarks_router  # noqa: E402
 
 app.include_router(tasks_router)
 app.include_router(stream_router)
 app.include_router(clarify_router)
+app.include_router(benchmarks_router)
 
 web_dir = Path(__file__).parent / "web"
 app.mount("/app", StaticFiles(directory=str(web_dir)), name="web")

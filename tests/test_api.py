@@ -329,3 +329,58 @@ async def test_clarify_validates_question_ids_match(async_client):
                       "selected_option_label": "A", "answer": "a"}],
     })
     assert response.status_code == 400
+
+
+# --- Phase 6: Benchmark API tests ---
+
+@pytest.mark.asyncio
+async def test_get_benchmarks_empty(async_client):
+    """GET /api/benchmarks returns empty list when no benchmarks exist."""
+    response = await async_client.get("/api/benchmarks")
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+@pytest.mark.asyncio
+async def test_get_task_benchmark_not_found(async_client):
+    """GET /api/tasks/{id}/benchmark returns 404 for unknown task."""
+    response = await async_client.get("/api/tasks/nonexist/benchmark")
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_task_benchmark_not_complete(async_client):
+    """GET /api/tasks/{id}/benchmark returns 400 for incomplete task."""
+    create_resp = await async_client.post("/api/tasks", json={
+        "task_description": "Benchmark test",
+        "target_repo": "owner/repo",
+    })
+    task_id = create_resp.json()["task_id"]
+
+    response = await async_client.get(f"/api/tasks/{task_id}/benchmark")
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_get_task_benchmark_after_completion(async_client):
+    """GET /api/tasks/{id}/benchmark returns data for completed task."""
+    import agent.main as main_module
+
+    create_resp = await async_client.post("/api/tasks", json={
+        "task_description": "Completed task",
+        "target_repo": "owner/repo",
+    })
+    task_id = create_resp.json()["task_id"]
+
+    # Simulate completion
+    await main_module.state_manager.update_task(task_id, status="DONE")
+    await main_module.storage.write(f"tasks/{task_id}/benchmark", {
+        "task_id": task_id,
+        "total_elapsed_ms": 5000,
+        "total_elapsed_human": "5s",
+        "skills": [],
+    })
+
+    response = await async_client.get(f"/api/tasks/{task_id}/benchmark")
+    assert response.status_code == 200
+    assert response.json()["task_id"] == task_id
