@@ -11,12 +11,18 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from agent.config import settings
+from agent.event_emitter import EventEmitter
 from agent.queue.nats_client import NATSClient
+from agent.state_manager import StateManager
+from agent.storage.local_volume import LocalVolumeStorage
 
 logging.basicConfig(level=settings.LOG_LEVEL)
 logger = logging.getLogger(__name__)
 
 nats_client = NATSClient(settings.NATS_URL)
+storage = LocalVolumeStorage(settings.DATA_PATH)
+state_manager = StateManager(storage)
+event_emitter = EventEmitter(state_manager)
 
 
 @asynccontextmanager
@@ -47,6 +53,11 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+# Register API routers
+from agent.api.routes.tasks import router as tasks_router  # noqa: E402
+
+app.include_router(tasks_router)
 
 web_dir = Path(__file__).parent / "web"
 app.mount("/app", StaticFiles(directory=str(web_dir)), name="web")
