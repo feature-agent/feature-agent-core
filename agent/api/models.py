@@ -7,12 +7,22 @@ from typing import Any, List, Optional
 from pydantic import BaseModel, model_validator
 
 
+class ProviderConfig(BaseModel):
+    """Provider credentials passed per-task from the client."""
+
+    provider_type: str
+    github_token: str
+    credentials: dict[str, Any] = {}
+
+
 class TaskCreateRequest(BaseModel):
     """Request body for creating a new task."""
 
+    task_id: str
     github_issue_url: Optional[str] = None
     task_description: Optional[str] = None
     target_repo: str
+    provider: ProviderConfig
 
     @model_validator(mode="after")
     def require_url_or_description(self) -> "TaskCreateRequest":

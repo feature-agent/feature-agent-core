@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import secrets
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, List, Optional
@@ -40,13 +39,17 @@ class StateManager:
 
     async def create_task(
         self,
+        task_id: str,
         source: str,
         github_issue_url: Optional[str],
         task_description: Optional[str],
         target_repo: str,
+        provider: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
         """Create a new task with PENDING status."""
-        task_id = secrets.token_hex(4)
+        existing = await self.get_task(task_id)
+        if existing is not None:
+            raise ValueError(f"Task {task_id} already exists")
         now = self._now_iso()
         task = {
             "task_id": task_id,
@@ -57,6 +60,7 @@ class StateManager:
             "github_issue_url": github_issue_url,
             "task_description": task_description,
             "target_repo": target_repo,
+            "provider": provider or {},
             "requirement": None,
             "clarification": None,
             "context": {},

@@ -87,16 +87,21 @@ async def test_storage_list_keys(tmp_data_dir):
 
 # --- Phase 2: Task API tests ---
 
+_PROVIDER = {"provider_type": "anthropic", "github_token": "test-token", "credentials": {"anthropic_api_key": "test-key"}}
+
+
 @pytest.mark.asyncio
 async def test_post_tasks_with_github_url(async_client):
     """POST /api/tasks with github_issue_url creates a task."""
     response = await async_client.post("/api/tasks", json={
+        "task_id": "test-gh-url-1",
         "github_issue_url": "https://github.com/owner/repo/issues/1",
         "target_repo": "owner/repo",
+        "provider": _PROVIDER,
     })
     assert response.status_code == 201
     data = response.json()
-    assert len(data["task_id"]) == 8
+    assert data["task_id"] == "test-gh-url-1"
     assert data["status"] == "PENDING"
 
 
@@ -104,8 +109,10 @@ async def test_post_tasks_with_github_url(async_client):
 async def test_post_tasks_with_description(async_client):
     """POST /api/tasks with task_description creates a task."""
     response = await async_client.post("/api/tasks", json={
+        "task_id": "test-desc-1",
         "task_description": "Add due_date field",
         "target_repo": "owner/repo",
+        "provider": _PROVIDER,
     })
     assert response.status_code == 201
     data = response.json()
@@ -116,7 +123,9 @@ async def test_post_tasks_with_description(async_client):
 async def test_post_tasks_requires_one_of_url_or_description(async_client):
     """POST /api/tasks fails without url or description."""
     response = await async_client.post("/api/tasks", json={
+        "task_id": "test-val-1",
         "target_repo": "owner/repo",
+        "provider": _PROVIDER,
     })
     assert response.status_code == 422
 
@@ -125,9 +134,26 @@ async def test_post_tasks_requires_one_of_url_or_description(async_client):
 async def test_post_tasks_requires_target_repo(async_client):
     """POST /api/tasks fails without target_repo."""
     response = await async_client.post("/api/tasks", json={
+        "task_id": "test-val-2",
         "task_description": "Add something",
+        "provider": _PROVIDER,
     })
     assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_post_tasks_duplicate_id_returns_409(async_client):
+    """POST /api/tasks with duplicate task_id returns 409."""
+    payload = {
+        "task_id": "dup-test-1",
+        "task_description": "First task",
+        "target_repo": "owner/repo",
+        "provider": _PROVIDER,
+    }
+    resp1 = await async_client.post("/api/tasks", json=payload)
+    assert resp1.status_code == 201
+    resp2 = await async_client.post("/api/tasks", json=payload)
+    assert resp2.status_code == 409
 
 
 @pytest.mark.asyncio
@@ -144,12 +170,16 @@ async def test_get_tasks_empty(async_client):
 async def test_get_tasks_with_records(async_client):
     """GET /api/tasks returns created tasks."""
     await async_client.post("/api/tasks", json={
+        "task_id": "test-list-1",
         "task_description": "Task 1",
         "target_repo": "owner/repo",
+        "provider": _PROVIDER,
     })
     await async_client.post("/api/tasks", json={
+        "task_id": "test-list-2",
         "task_description": "Task 2",
         "target_repo": "owner/repo",
+        "provider": _PROVIDER,
     })
     response = await async_client.get("/api/tasks")
     data = response.json()
@@ -160,8 +190,10 @@ async def test_get_tasks_with_records(async_client):
 async def test_get_task_by_id(async_client):
     """GET /api/tasks/{task_id} returns the specific task."""
     create_resp = await async_client.post("/api/tasks", json={
+        "task_id": "test-get-1",
         "task_description": "Specific task",
         "target_repo": "owner/repo",
+        "provider": _PROVIDER,
     })
     task_id = create_resp.json()["task_id"]
 
@@ -184,8 +216,10 @@ async def test_get_task_not_found_returns_404(async_client):
 async def test_stream_returns_200_with_correct_content_type(async_client):
     """GET /api/stream/{task_id} returns 200 with text/event-stream."""
     create_resp = await async_client.post("/api/tasks", json={
+        "task_id": "test-stream-1",
         "task_description": "Stream test",
         "target_repo": "owner/repo",
+        "provider": _PROVIDER,
     })
     task_id = create_resp.json()["task_id"]
 
@@ -202,8 +236,10 @@ async def test_stream_returns_200_with_correct_content_type(async_client):
 async def test_stream_replays_existing_events(async_client):
     """GET /api/stream/{task_id} replays stored events."""
     create_resp = await async_client.post("/api/tasks", json={
+        "task_id": "test-replay-1",
         "task_description": "Replay test",
         "target_repo": "owner/repo",
+        "provider": _PROVIDER,
     })
     task_id = create_resp.json()["task_id"]
 
@@ -240,8 +276,10 @@ async def _create_awaiting_task(async_client):
     """Helper: create a task and set it to AWAITING_CLARIFICATION."""
     import agent.main as main_module
     create_resp = await async_client.post("/api/tasks", json={
+        "task_id": "test-clarify-1",
         "task_description": "Clarify test",
         "target_repo": "owner/repo",
+        "provider": _PROVIDER,
     })
     task_id = create_resp.json()["task_id"]
 
@@ -279,8 +317,10 @@ async def test_clarify_resumes_task(async_client):
 async def test_clarify_rejects_wrong_status(async_client):
     """POST /api/tasks/{id}/clarify rejects tasks not awaiting clarification."""
     create_resp = await async_client.post("/api/tasks", json={
+        "task_id": "test-clarify-status-1",
         "task_description": "Not awaiting",
         "target_repo": "owner/repo",
+        "provider": _PROVIDER,
     })
     task_id = create_resp.json()["task_id"]
 
@@ -352,8 +392,10 @@ async def test_get_task_benchmark_not_found(async_client):
 async def test_get_task_benchmark_not_complete(async_client):
     """GET /api/tasks/{id}/benchmark returns 400 for incomplete task."""
     create_resp = await async_client.post("/api/tasks", json={
+        "task_id": "test-bench-1",
         "task_description": "Benchmark test",
         "target_repo": "owner/repo",
+        "provider": _PROVIDER,
     })
     task_id = create_resp.json()["task_id"]
 
@@ -367,8 +409,10 @@ async def test_get_task_benchmark_after_completion(async_client):
     import agent.main as main_module
 
     create_resp = await async_client.post("/api/tasks", json={
+        "task_id": "test-bench-done-1",
         "task_description": "Completed task",
         "target_repo": "owner/repo",
+        "provider": _PROVIDER,
     })
     task_id = create_resp.json()["task_id"]
 
