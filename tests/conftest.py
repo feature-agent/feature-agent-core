@@ -62,14 +62,28 @@ def sample_task() -> dict:
 
 @pytest_asyncio.fixture
 async def async_client(mock_nats_client: AsyncMock) -> AsyncClient:
-    """Async HTTP test client with mocked NATS."""
+    """Async HTTP test client with mocked NATS and isolated storage."""
     import agent.main as main_module
+    from agent.event_emitter import EventEmitter
+    from agent.state_manager import StateManager
+    from agent.storage.local_volume import LocalVolumeStorage
 
     original_nats = main_module.nats_client
-    main_module.nats_client = mock_nats_client
+    original_storage = main_module.storage
+    original_state = main_module.state_manager
+    original_emitter = main_module.event_emitter
 
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        yield client
+    with tempfile.TemporaryDirectory() as tmpdir:
+        main_module.nats_client = mock_nats_client
+        main_module.storage = LocalVolumeStorage(tmpdir)
+        main_module.state_manager = StateManager(main_module.storage)
+        main_module.event_emitter = EventEmitter(main_module.state_manager)
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            yield client
 
     main_module.nats_client = original_nats
+    main_module.storage = original_storage
+    main_module.state_manager = original_state
+    main_module.event_emitter = original_emitter
