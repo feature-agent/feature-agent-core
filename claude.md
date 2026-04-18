@@ -26,12 +26,49 @@ See claude.md for the full build prompt.
   API:         FastAPI
   Queue:       NATS JetStream
   LLM:         Claude API via Anthropic SDK
-  Model:       claude-opus-4-5
+  Model:       claude-opus-4-7
   GitHub:      PyGithub
   Container:   Docker + Docker Compose
   Storage:     Docker named volume
   Testing:     pytest + pytest-asyncio
   Config:      pydantic-settings
+
+## Supported Target Languages
+
+The Feature Agent currently supports **Python target repos only**. Pointing it at
+a TypeScript, Java, Go, or C# project will result in the agent finding zero
+relevant files and the pipeline failing in the codebase_explorer or test_runner
+step.
+
+### Python-specific assumptions
+
+| Component | What's hardcoded |
+|---|---|
+| `codebase_explorer` | Scans only `**/*.py` files via `repo_path.rglob("*.py")` |
+| `code_writer` / `test_writer` | System prompts reference pytest, Alembic, and Python idioms |
+| `test_runner` | Runs `pip install -r requirements.txt` and `python -m pytest` |
+
+### Extending to other languages
+
+The orchestrator, clarifier, issue_reader, pr_creator, benchmark, queue, and UI
+are language-agnostic. To add support for another language, add a language
+adapter that provides:
+
+1. **File globs** — e.g. `*.cs`/`*.csproj` for C#, `*.java`/`pom.xml` for Java,
+   `*.ts`/`package.json` for TypeScript/Node, `*.go`/`go.mod` for Go.
+2. **Dependency install + test commands** — `dotnet restore && dotnet test`,
+   `mvn test`, `npm ci && npm test`, `go test ./...`, etc.
+3. **Prompt flavor** — swap pytest/Alembic references in the system prompts for
+   the target language's equivalents (xUnit + EF migrations, JUnit + Flyway,
+   vitest/jest, Go's built-in testing, etc.).
+
+A reasonable detector runs first: inspect the cloned repo for
+`pom.xml`/`build.gradle` (Java), `*.csproj`/`*.sln` (C#), `package.json` (Node),
+`go.mod` (Go), `requirements.txt`/`pyproject.toml` (Python), and dispatches to
+the matching adapter.
+
+First additional language is roughly a day of work; subsequent languages are a
+few hours each.
 
 ## Architecture
 
