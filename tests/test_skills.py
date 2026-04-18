@@ -252,9 +252,12 @@ async def test_code_writer_includes_test_failure_on_retry(llm, benchmark, emitte
         llm, benchmark, emitter,
     )
 
-    # Verify the call included test failure in the prompt
+    # Verify the call included test failure context on retry
     call_args = llm.call.call_args
-    assert "Previous attempt failed tests" in call_args.kwargs.get("user", call_args.args[1] if len(call_args.args) > 1 else "")
+    user_prompt = call_args.kwargs.get("user", call_args.args[1] if len(call_args.args) > 1 else "")
+    assert "Tests reported" in user_prompt
+    assert "FAILED test_something - AssertionError" in user_prompt
+    assert "ITERATE" in user_prompt
 
 
 # --- TestWriterSkill ---

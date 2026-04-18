@@ -152,7 +152,8 @@ class TestAnthropicProvider:
         assert result.model == "claude-opus-4-5-20250514"
 
     @pytest.mark.asyncio
-    async def test_temperature_zero(self) -> None:
+    async def test_deprecated_sampling_params_not_sent(self) -> None:
+        """Claude Opus 4.7 deprecated temperature/top_p — they must not be passed."""
         provider = AnthropicProvider.__new__(AnthropicProvider)
         mock_usage = MagicMock(input_tokens=10, output_tokens=5, cache_read_input_tokens=0)
         mock_content = MagicMock(text="ok")
@@ -162,9 +163,9 @@ class TestAnthropicProvider:
         provider._client = mock_client
 
         await provider.call(system="sys", user="usr")
-        call_kwargs = mock_client.messages.create.call_args
-        assert call_kwargs.kwargs["temperature"] == 0.0
-        assert call_kwargs.kwargs["top_p"] == 1.0
+        call_kwargs = mock_client.messages.create.call_args.kwargs
+        assert "temperature" not in call_kwargs
+        assert "top_p" not in call_kwargs
 
     @pytest.mark.asyncio
     async def test_retry_on_error(self) -> None:
