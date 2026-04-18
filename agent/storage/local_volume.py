@@ -88,3 +88,16 @@ class LocalVolumeStorage(StorageInterface):
     async def exists(self, key: str) -> bool:
         """Check if a key exists (as .json or .jsonl)."""
         return self._json_path(key).exists() or self._jsonl_path(key).exists()
+
+    async def delete(self, key: str) -> None:
+        """Remove the .json and .jsonl artifacts for the given key, plus any now-empty parent dirs."""
+        async with self._get_lock(key):
+            for path in (self._json_path(key), self._jsonl_path(key)):
+                if path.exists():
+                    path.unlink()
+                    logger.debug("Deleted %s", path)
+            parent = self._json_path(key).parent
+            while parent != self._base and parent.exists() and not any(parent.iterdir()):
+                parent.rmdir()
+                logger.debug("Removed empty dir %s", parent)
+                parent = parent.parent

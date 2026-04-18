@@ -7,7 +7,7 @@ from typing import Any
 
 from agent.benchmark import BenchmarkTracker
 from agent.event_emitter import EventEmitter
-from agent.llm_client import LLMClient
+from agent.llm import LLMProvider
 
 
 class SkillError(Exception):
@@ -30,7 +30,7 @@ class Skill(ABC):
         self,
         task_id: str,
         context: dict[str, Any],
-        llm: LLMClient,
+        llm: LLMProvider,
         benchmark: BenchmarkTracker,
         emitter: EventEmitter,
     ) -> dict[str, Any]:

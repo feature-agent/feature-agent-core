@@ -20,6 +20,7 @@ class TaskState(str, Enum):
     AWAITING_CLARIFICATION = "AWAITING_CLARIFICATION"
     DONE = "DONE"
     FAILED = "FAILED"
+    CANCELED = "CANCELED"
 
 
 class StateManager:
@@ -97,6 +98,13 @@ class StateManager:
                     tasks.append(task)
         tasks.sort(key=lambda t: t.get("created_at", ""), reverse=True)
         return tasks
+
+    async def delete_task(self, task_id: str) -> None:
+        """Remove all per-task artifacts: state, event log, and benchmark."""
+        await self._storage.delete(self._task_key(task_id))
+        await self._storage.delete(self._events_key(task_id))
+        await self._storage.delete(f"tasks/{task_id}/benchmark")
+        logger.info("Deleted task %s", task_id)
 
     async def append_event(self, task_id: str, event: dict[str, Any]) -> None:
         """Append an event to the task's event log."""

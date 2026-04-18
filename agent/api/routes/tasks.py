@@ -12,6 +12,7 @@ from agent.api.models import (
     TaskListResponse,
     TaskResponse,
 )
+from agent.state_manager import TaskState
 
 logger = logging.getLogger(__name__)
 
@@ -83,3 +84,21 @@ async def get_task(task_id: str) -> TaskResponse:
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
     return TaskResponse(**_strip_provider(task))
+
+
+TERMINAL_STATES = {TaskState.DONE.value, TaskState.FAILED.value, TaskState.CANCELED.value}
+
+
+@router.delete("/{task_id}")
+async def delete_or_cancel_task(task_id: str) -> dict:
+    """DELETE semantics: if the task is running, mark CANCELED; if terminal, remove."""
+    state_manager, _, _ = _get_deps()
+    task = await state_manager.get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    if task["status"] in TERMINAL_STATES:
+        await state_manager.delete_task(task_id)
+        return {"task_id": task_id, "action": "deleted"}
+    await state_manager.update_task(task_id, status=TaskState.CANCELED.value)
+    logger.info("Task %s marked for cancellation", task_id)
+    return {"task_id": task_id, "action": "canceled"}

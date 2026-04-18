@@ -11,9 +11,8 @@ from pathlib import Path
 from typing import Any
 
 from agent.benchmark import BenchmarkTracker
-from agent.config import settings
 from agent.event_emitter import EventEmitter
-from agent.llm_client import LLMClient
+from agent.llm import LLMProvider
 from agent.skill_base import Skill, SkillError
 
 logger = logging.getLogger(__name__)
@@ -55,7 +54,7 @@ class PRCreatorSkill(Skill):
         self,
         task_id: str,
         context: dict[str, Any],
-        llm: LLMClient,
+        llm: LLMProvider,
         benchmark: BenchmarkTracker,
         emitter: EventEmitter,
     ) -> dict[str, Any]:
@@ -76,10 +75,11 @@ class PRCreatorSkill(Skill):
             # Clone repo
             tmp_dir = tempfile.mkdtemp(prefix="agent_pr_")
             repo_dir = os.path.join(tmp_dir, "repo")
-            clone_url = f"https://x-access-token:{settings.GITHUB_TOKEN}@github.com/{target_repo}.git"
+            github_token = context.get("github_token", "")
+            clone_url = f"https://x-access-token:{github_token}@github.com/{target_repo}.git"
 
             subprocess.run(
-                ["git", "clone", clone_url, repo_dir],
+                ["git", "clone", "--branch", "main", clone_url, repo_dir],
                 capture_output=True, text=True, check=True,
             )
 
@@ -93,17 +93,25 @@ class PRCreatorSkill(Skill):
 
             repo_path = Path(repo_dir)
 
-            # Apply code changes
-            for change in code_changes:
-                file_path = repo_path / change["path"]
-                file_path.parent.mkdir(parents=True, exist_ok=True)
-                file_path.write_text(change["new_content"])
-
-            # Apply test changes
-            for change in test_changes:
-                file_path = repo_path / change["path"]
-                file_path.parent.mkdir(parents=True, exist_ok=True)
-                file_path.write_text(change["new_content"])
+            from agent.utils.file_changes import apply_changes, ApplyChangesError
+            try:
+                code_written, code_skipped = apply_changes(repo_path, code_changes)
+                test_written, test_skipped = apply_changes(repo_path, test_changes)
+            except ApplyChangesError as exc:
+                raise SkillError(self.name, str(exc)) from exc
+            skipped_noops = code_skipped + test_skipped
+            if skipped_noops:
+                await self._emit_log(
+                    task_id,
+                    emitter,
+                    f"Skipped {len(skipped_noops)} no-op file write(s): {', '.join(skipped_noops[:5])}"
+                    + ("..." if len(skipped_noops) > 5 else ""),
+                )
+            if code_written + test_written == 0:
+                raise SkillError(
+                    self.name,
+                    "No effective file changes after filtering no-ops — nothing to commit.",
+                )
 
             # Git add and commit
             subprocess.run(
@@ -157,7 +165,7 @@ class PRCreatorSkill(Skill):
             await self._emit_log(task_id, emitter, "Opening PR...")
             from github import Github
 
-            g = Github(settings.GITHUB_TOKEN)
+            g = Github(github_token)
             gh_repo = g.get_repo(target_repo)
 
             # Build PR body

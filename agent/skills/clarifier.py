@@ -7,7 +7,7 @@ from typing import Any
 
 from agent.benchmark import BenchmarkTracker
 from agent.event_emitter import EventEmitter
-from agent.llm_client import LLMClient
+from agent.llm import LLMProvider
 from agent.skill_base import Skill, SkillError
 
 logger = logging.getLogger(__name__)
@@ -54,7 +54,7 @@ class ClarifierSkill(Skill):
         self,
         task_id: str,
         context: dict[str, Any],
-        llm: LLMClient,
+        llm: LLMProvider,
         benchmark: BenchmarkTracker,
         emitter: EventEmitter,
     ) -> dict[str, Any]:

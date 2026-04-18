@@ -26,8 +26,9 @@ def mock_nats_client() -> AsyncMock:
 
 @pytest.fixture
 def mock_llm_client() -> MagicMock:
-    """Mock LLM client for testing without Anthropic API."""
-    client = MagicMock()
+    """Mock LLM provider for testing without real API."""
+    from agent.llm import LLMProvider
+    client = MagicMock(spec=LLMProvider)
     client.call = AsyncMock()
     client.parse_json = AsyncMock()
     return client

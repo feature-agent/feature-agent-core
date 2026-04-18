@@ -9,7 +9,7 @@ from typing import Any, List, Optional
 
 from pydantic import BaseModel
 
-from agent.llm_client import LLMResponse
+from agent.llm import LLMResponse
 from agent.storage.interface import StorageInterface
 
 logger = logging.getLogger(__name__)
@@ -55,8 +55,10 @@ class TaskBenchmark(BaseModel):
     task_id: str
     started_at: str
     ended_at: str
-    total_elapsed_ms: int
-    total_elapsed_human: str
+    total_elapsed_ms: int  # wall-clock (includes user wait during clarification)
+    total_elapsed_human: str  # human-readable form of total_agent_ms (what students care about)
+    total_agent_ms: int = 0  # sum of per-skill elapsed_ms, excludes user wait
+    user_wait_ms: int = 0  # total_elapsed_ms - total_agent_ms
     skills: List[SkillBenchmark]
     total_llm_ms: int
     total_non_llm_ms: int
@@ -151,13 +153,15 @@ class BenchmarkTracker:
         ended_at = datetime.now(timezone.utc).isoformat()
         total_elapsed_ms = int((time.monotonic() - self._task_start) * 1000)
 
+        total_agent_ms = sum(s.elapsed_ms for s in self._skills)
+        user_wait_ms = max(0, total_elapsed_ms - total_agent_ms)
         total_llm_ms = sum(s.llm_total_ms for s in self._skills)
         total_input = sum(s.input_tokens for s in self._skills)
         total_output = sum(s.output_tokens for s in self._skills)
         total_cached = sum(s.cached_tokens for s in self._skills)
 
-        # Format human-readable time
-        seconds = total_elapsed_ms // 1000
+        # Human-readable form reflects AGENT time, not wall-clock — that's what students care about
+        seconds = total_agent_ms // 1000
         if seconds >= 60:
             total_elapsed_human = f"{seconds // 60}m {seconds % 60}s"
         else:
@@ -177,9 +181,11 @@ class BenchmarkTracker:
             ended_at=ended_at,
             total_elapsed_ms=total_elapsed_ms,
             total_elapsed_human=total_elapsed_human,
+            total_agent_ms=total_agent_ms,
+            user_wait_ms=user_wait_ms,
             skills=self._skills,
             total_llm_ms=total_llm_ms,
-            total_non_llm_ms=max(0, total_elapsed_ms - total_llm_ms),
+            total_non_llm_ms=max(0, total_agent_ms - total_llm_ms),
             total_input_tokens=total_input,
             total_output_tokens=total_output,
             total_cached_tokens=total_cached,
@@ -196,3 +202,25 @@ class BenchmarkTracker:
         await storage.write(f"tasks/{task_id}/benchmark", benchmark.model_dump())
         await storage.append("benchmarks", benchmark.model_dump())
         logger.info("Saved benchmark for task %s", task_id)
+
+    async def restore_from(self, task_id: str, storage: StorageInterface) -> None:
+        """Load previously-saved skills and original start time into this tracker."""
+        saved = await storage.read(f"tasks/{task_id}/benchmark")
+        if not saved:
+            return
+        for s_data in saved.get("skills", []):
+            try:
+                self._skills.append(SkillBenchmark(**s_data))
+            except Exception:
+                logger.warning("Could not restore skill: %s", s_data.get("skill_name"))
+        started_at = saved.get("started_at")
+        if started_at:
+            self._task_start_iso = started_at
+            try:
+                saved_dt = datetime.fromisoformat(started_at)
+                now_dt = datetime.now(timezone.utc)
+                elapsed_seconds = (now_dt - saved_dt).total_seconds()
+                self._task_start = time.monotonic() - elapsed_seconds
+            except Exception:
+                pass
+        logger.info("Restored %d prior skills for task %s", len(saved.get("skills", [])), task_id)

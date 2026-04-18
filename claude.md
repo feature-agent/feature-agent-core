@@ -48,6 +48,54 @@ See claude.md for the full build prompt.
                               + emitted to client
                               via GET /stream/{id}
 
+### Skill Pipeline
+
+```
+  ┌─────────────┐     ┌───────────┐     ┌──────────────────┐
+  │ IssueReader  │────▶│ Clarifier │────▶│ CodebaseExplorer │
+  │  (skill 1)   │     │ (skill 2) │     │    (skill 3)     │
+  └─────────────┘     └─────┬─────┘     └────────┬─────────┘
+                            │                     │
+                   ┌────────┘                     │
+                   │ if unclear:                  │
+                   │ PAUSE pipeline               │
+                   │ → AWAITING_CLARIFICATION     │
+                   │ → wait for POST /clarify     │
+                   │ → RESUME from skill 3        │
+                   └────────┐                     │
+                            │                     ▼
+                            │           ┌──────────────────┐
+                            │           │   CodeWriter      │◄──┐
+                            │           │    (skill 4)      │   │
+                            │           └────────┬─────────┘   │
+                            │                    │              │
+                            │           ┌────────▼─────────┐   │
+                            │           │   TestWriter      │   │
+                            │           │    (skill 5)      │   │
+                            │           └────────┬─────────┘   │
+                            │                    │              │
+                            │           ┌────────▼─────────┐   │
+                            │           │   TestRunner      │   │
+                            │           │    (skill 6)      │   │
+                            │           └────────┬─────────┘   │
+                            │                    │              │
+                            │           PASS? ───┤              │
+                            │            yes     no (max 2x) ──┘
+                            │             │
+                            │    ┌────────▼─────────┐
+                            │    │   PRCreator       │
+                            │    │    (skill 7)      │
+                            │    └────────┬─────────┘
+                            │             │
+                            │             ▼
+                            │      GitHub PR opened
+                            │
+  Task States:
+  PENDING → RUNNING → AWAITING_CLARIFICATION → RUNNING → DONE
+                  │                                        │
+                  └──────────── FAILED ◄───────────────────┘
+```
+
 ### Why this architecture (v1)
 FastAPI sits in front of NATS. The agent worker
 consumes tasks from the queue and processes them
@@ -162,27 +210,27 @@ To swap Docker volume for EFS:
 
 ## Phase Build Plan
 
-### Phase 1 — Foundation [ ]
+### Phase 1 — Foundation [DONE]
   PR: "feat: project scaffold, Docker Compose,
        NATS, config, and health endpoint"
 
-### Phase 2 — State management and task API [ ]
+### Phase 2 — State management and task API [DONE]
   PR: "feat: task state manager, POST /tasks,
        GET /tasks, SSE event storage"
 
-### Phase 3 — SSE streaming endpoint [ ]
+### Phase 3 — SSE streaming endpoint [DONE]
   PR: "feat: SSE streaming, event replay,
        and keep-alive"
 
-### Phase 4 — LLM client and all 7 skills [ ]
+### Phase 4 — LLM client and all 7 skills [DONE]
   PR: "feat: LLM client, benchmark tracker,
        and all 7 skill implementations"
 
-### Phase 5 — Orchestrator and clarification [ ]
+### Phase 5 — Orchestrator and clarification [DONE]
   PR: "feat: orchestrator, full pipeline,
        clarification flow, POST /clarify"
 
-### Phase 6 — Benchmark endpoints and polish [ ]
+### Phase 6 — Benchmark endpoints and polish [DONE]
   PR: "feat: benchmark endpoints, error hardening,
        scaling notes, final CLAUDE.md"
 

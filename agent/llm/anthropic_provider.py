@@ -13,7 +13,7 @@ from agent.llm.base import LLMError, LLMProvider, LLMResponse
 
 logger = logging.getLogger(__name__)
 
-MODEL = "claude-opus-4-5-20250514"
+MODEL = "claude-opus-4-7"
 RETRY_DELAY_SECONDS = 2.0
 
 
@@ -32,7 +32,7 @@ class AnthropicProvider(LLMProvider):
         user: str,
         use_cache: bool = True,
     ) -> LLMResponse:
-        """Call Claude with temperature=0.0, top_p=1.0. Retries once on failure."""
+        """Call Claude. Retries once on failure."""
         if use_cache:
             system_messages = [
                 {
@@ -50,9 +50,7 @@ class AnthropicProvider(LLMProvider):
                 response = await asyncio.to_thread(
                     self._client.messages.create,
                     model=MODEL,
-                    max_tokens=4096,
-                    temperature=0.0,
-                    top_p=1.0,
+                    max_tokens=16384,
                     system=system_messages,
                     messages=[{"role": "user", "content": user}],
                 )

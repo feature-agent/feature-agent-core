@@ -11,9 +11,8 @@ from pathlib import Path
 from typing import Any
 
 from agent.benchmark import BenchmarkTracker
-from agent.config import settings
 from agent.event_emitter import EventEmitter
-from agent.llm_client import LLMClient
+from agent.llm import LLMProvider
 from agent.skill_base import Skill, SkillError
 
 logger = logging.getLogger(__name__)
@@ -40,7 +39,7 @@ class CodebaseExplorerSkill(Skill):
         self,
         task_id: str,
         context: dict[str, Any],
-        llm: LLMClient,
+        llm: LLMProvider,
         benchmark: BenchmarkTracker,
         emitter: EventEmitter,
     ) -> dict[str, Any]:
@@ -55,10 +54,11 @@ class CodebaseExplorerSkill(Skill):
             # Clone repo
             tmp_dir = tempfile.mkdtemp(prefix="agent_explore_")
             repo_dir = os.path.join(tmp_dir, "repo")
-            clone_url = f"https://x-access-token:{settings.GITHUB_TOKEN}@github.com/{target_repo}.git"
+            github_token = context.get("github_token", "")
+            clone_url = f"https://x-access-token:{github_token}@github.com/{target_repo}.git"
 
             subprocess.run(
-                ["git", "clone", "--depth", "1", clone_url, repo_dir],
+                ["git", "clone", "--depth", "1", "--branch", "main", clone_url, repo_dir],
                 capture_output=True, text=True, check=True,
             )
             await self._emit_progress(task_id, emitter, f"Cloned {target_repo}")
@@ -103,9 +103,19 @@ class CodebaseExplorerSkill(Skill):
 
             analysis = await llm.parse_json(response.content)
 
+            # Always include shared test helpers — they often need updates
+            # when schemas change, and the LLM routinely misses them.
+            analyst_paths = list(analysis.get("relevant_file_paths", []))
+            for conftest in repo_path.rglob("conftest.py"):
+                rel = str(conftest.relative_to(repo_path))
+                if "__pycache__" in rel or ".git" in rel:
+                    continue
+                if rel not in analyst_paths:
+                    analyst_paths.append(rel)
+
             # Read full content of relevant files
             relevant_files = []
-            for path in analysis.get("relevant_file_paths", []):
+            for path in analyst_paths:
                 full_path = repo_path / path
                 if full_path.exists():
                     content = full_path.read_text(errors="replace")

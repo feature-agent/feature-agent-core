@@ -8,7 +8,7 @@ import pytest
 
 from agent.benchmark import BenchmarkTracker
 from agent.event_emitter import EventEmitter
-from agent.llm_client import LLMClient
+from agent.llm import LLMProvider
 from agent.orchestrator import Orchestrator
 from agent.skill_base import Skill, SkillError
 from agent.state_manager import StateManager, TaskState
@@ -114,16 +114,16 @@ def emitter(state):
 
 
 @pytest.fixture
-def mock_create_llm():
-    mock_llm = MagicMock(spec=LLMClient)
+def mock_create_provider():
+    mock_llm = MagicMock(spec=LLMProvider)
     mock_llm.call = AsyncMock()
     mock_llm.parse_json = AsyncMock()
-    with patch.object(Orchestrator, "_create_llm", return_value=mock_llm):
+    with patch.object(Orchestrator, "_create_provider", return_value=mock_llm):
         yield mock_llm
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_runs_all_skills_in_order(storage, state, emitter, mock_create_llm):
+async def test_orchestrator_runs_all_skills_in_order(storage, state, emitter, mock_create_provider):
     """Orchestrator executes all 7 skills when everything succeeds."""
     skills = _make_skills()
     orch = Orchestrator(skills, state, emitter, storage)
@@ -139,7 +139,7 @@ async def test_orchestrator_runs_all_skills_in_order(storage, state, emitter, mo
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_pauses_on_clarification_needed(storage, state, emitter, mock_create_llm):
+async def test_orchestrator_pauses_on_clarification_needed(storage, state, emitter, mock_create_provider):
     """Orchestrator pauses when clarifier says requirement is unclear."""
     skills = _make_skills(clarification_clear=False)
     orch = Orchestrator(skills, state, emitter, storage)
@@ -154,7 +154,7 @@ async def test_orchestrator_pauses_on_clarification_needed(storage, state, emitt
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_resumes_after_clarification(storage, state, emitter, mock_create_llm):
+async def test_orchestrator_resumes_after_clarification(storage, state, emitter, mock_create_provider):
     """Orchestrator resumes from step 3 after clarification answers."""
     skills = _make_skills(clarification_clear=False)
     orch = Orchestrator(skills, state, emitter, storage)
@@ -178,7 +178,7 @@ async def test_orchestrator_resumes_after_clarification(storage, state, emitter,
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_retries_code_writer_on_test_failure(storage, state, emitter, mock_create_llm):
+async def test_orchestrator_retries_code_writer_on_test_failure(storage, state, emitter, mock_create_provider):
     """Orchestrator retries code_writer when tests fail."""
     skills = _make_skills()
     call_count = {"test_runner": 0}
@@ -212,7 +212,7 @@ async def test_orchestrator_retries_code_writer_on_test_failure(storage, state, 
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_fails_after_max_retries(storage, state, emitter, mock_create_llm):
+async def test_orchestrator_fails_after_max_retries(storage, state, emitter, mock_create_provider):
     """Orchestrator fails task after max test retries exhausted."""
     skills = _make_skills(tests_pass=False)
     orch = Orchestrator(skills, state, emitter, storage)
@@ -225,7 +225,7 @@ async def test_orchestrator_fails_after_max_retries(storage, state, emitter, moc
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_emits_task_done_on_success(storage, state, emitter, mock_create_llm):
+async def test_orchestrator_emits_task_done_on_success(storage, state, emitter, mock_create_provider):
     """Orchestrator emits task_done event on successful completion."""
     skills = _make_skills()
     orch = Orchestrator(skills, state, emitter, storage)
@@ -240,7 +240,7 @@ async def test_orchestrator_emits_task_done_on_success(storage, state, emitter, 
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_emits_task_failed_on_skill_error(storage, state, emitter, mock_create_llm):
+async def test_orchestrator_emits_task_failed_on_skill_error(storage, state, emitter, mock_create_provider):
     """Orchestrator emits task_failed event when a skill raises SkillError."""
     skills = _make_skills()
     skills[0] = MockSkill("issue_reader", {}, should_fail=True)
@@ -255,7 +255,7 @@ async def test_orchestrator_emits_task_failed_on_skill_error(storage, state, emi
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_saves_benchmark_on_completion(storage, state, emitter, mock_create_llm):
+async def test_orchestrator_saves_benchmark_on_completion(storage, state, emitter, mock_create_provider):
     """Orchestrator saves benchmark data after task completion."""
     skills = _make_skills()
     orch = Orchestrator(skills, state, emitter, storage)

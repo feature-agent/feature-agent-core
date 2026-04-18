@@ -32,3 +32,7 @@ class StorageInterface(ABC):
     @abstractmethod
     async def exists(self, key: str) -> bool:
         """Check if a key exists in storage."""
+
+    @abstractmethod
+    async def delete(self, key: str) -> None:
+        """Remove both the JSON and JSONL artifacts for the given key, if present."""

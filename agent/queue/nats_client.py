@@ -76,10 +76,12 @@ class NATSClient:
         """Subscribe to a JetStream subject with a durable consumer."""
         if not self._js:
             raise ConnectionError("NATS not connected")
+        from nats.js.api import ConsumerConfig
         sub = await self._js.subscribe(
             subject,
             durable=durable_name,
             cb=handler,
+            config=ConsumerConfig(ack_wait=600),
         )
         logger.info("Subscribed to %s (durable=%s)", subject, durable_name)
         return sub

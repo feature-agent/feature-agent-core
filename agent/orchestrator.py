@@ -8,14 +8,18 @@ from typing import Any, List
 
 from agent.benchmark import BenchmarkTracker
 from agent.event_emitter import EventEmitter
-from agent.llm_client import LLMClient
+from agent.llm import LLMProvider, create_provider
 from agent.skill_base import Skill, SkillError
 from agent.state_manager import StateManager, TaskState
 from agent.storage.interface import StorageInterface
 
 logger = logging.getLogger(__name__)
 
-MAX_TEST_RETRIES = 2
+MAX_TEST_RETRIES = 4
+
+
+class TaskCanceled(Exception):
+    """Raised when a task is canceled mid-pipeline."""
 
 
 class Orchestrator:
@@ -26,14 +30,16 @@ class Orchestrator:
         skills: List[Skill],
         state: StateManager,
         emitter: EventEmitter,
-        llm: LLMClient,
         storage: StorageInterface,
     ) -> None:
         self._skills = skills
         self._state = state
         self._emitter = emitter
-        self._llm = llm
         self._storage = storage
+
+    def _create_provider(self, provider_type: str, credentials: dict) -> LLMProvider:
+        """Create an LLM provider from the per-task provider config."""
+        return create_provider(provider_type, credentials)
 
     async def run(self, task_id: str) -> None:
         """Execute the full skill pipeline for a new task."""
@@ -42,6 +48,14 @@ class Orchestrator:
             logger.error("Task %s not found", task_id)
             return
 
+        provider = task.get("provider", {})
+        provider_type = provider.get("provider_type", "")
+        credentials = provider.get("credentials", {})
+        if not provider_type or not credentials:
+            await self._handle_failure(task_id, BenchmarkTracker(), "Missing provider_type or credentials")
+            return
+
+        llm = self._create_provider(provider_type, credentials)
         benchmark = BenchmarkTracker()
         await self._state.update_task(task_id, status=TaskState.RUNNING.value)
         await self._emitter.emit(task_id, "task_start")
@@ -49,6 +63,7 @@ class Orchestrator:
         context: dict[str, Any] = {
             "task_id": task_id,
             "target_repo": task["target_repo"],
+            "github_token": provider.get("github_token", ""),
             "github_issue_url": task.get("github_issue_url"),
             "task_description": task.get("task_description"),
             "iteration": 0,
@@ -58,13 +73,13 @@ class Orchestrator:
         try:
             # Step 1: issue_reader
             result = await self._run_skill(
-                self._skills[0], task_id, context, benchmark
+                self._skills[0], task_id, context, llm, benchmark
             )
             context.update(result)
 
             # Step 2: clarifier
             result = await self._run_skill(
-                self._skills[1], task_id, context, benchmark
+                self._skills[1], task_id, context, llm, benchmark
             )
             context.update(result)
 
@@ -82,9 +97,11 @@ class Orchestrator:
 
             # Steps 3-7: continue pipeline
             await self._run_remaining_pipeline(
-                task_id, context, benchmark
+                task_id, context, llm, benchmark
             )
 
+        except TaskCanceled:
+            await self._handle_canceled(task_id, benchmark)
         except SkillError as exc:
             await self._handle_failure(task_id, benchmark, str(exc))
         except Exception as exc:
@@ -102,8 +119,20 @@ class Orchestrator:
             logger.error("Task %s in unexpected status %s for resume", task_id, task["status"])
             return
 
+        provider = task.get("provider", {})
+        provider_type = provider.get("provider_type", "")
+        credentials = provider.get("credentials", {})
+        if not provider_type or not credentials:
+            await self._handle_failure(task_id, BenchmarkTracker(), "Missing provider_type or credentials")
+            return
+
+        llm = self._create_provider(provider_type, credentials)
         benchmark = BenchmarkTracker()
+        await benchmark.restore_from(task_id, self._storage)
         context = task.get("context", {})
+        # Ensure github_token is in context for resumed tasks
+        if "github_token" not in context:
+            context["github_token"] = provider.get("github_token", "")
 
         # Add clarification answers to context
         clarification = task.get("clarification", {})
@@ -118,8 +147,10 @@ class Orchestrator:
 
         try:
             await self._run_remaining_pipeline(
-                task_id, context, benchmark
+                task_id, context, llm, benchmark
             )
+        except TaskCanceled:
+            await self._handle_canceled(task_id, benchmark)
         except SkillError as exc:
             await self._handle_failure(task_id, benchmark, str(exc))
         except Exception as exc:
@@ -129,12 +160,13 @@ class Orchestrator:
         self,
         task_id: str,
         context: dict[str, Any],
+        llm: LLMProvider,
         benchmark: BenchmarkTracker,
     ) -> None:
         """Run steps 3-7 of the pipeline (codebase_explorer through pr_creator)."""
         # Step 3: codebase_explorer
         result = await self._run_skill(
-            self._skills[2], task_id, context, benchmark
+            self._skills[2], task_id, context, llm, benchmark
         )
         context.update(result)
 
@@ -144,19 +176,19 @@ class Orchestrator:
 
             # Step 4: code_writer
             result = await self._run_skill(
-                self._skills[3], task_id, context, benchmark
+                self._skills[3], task_id, context, llm, benchmark
             )
             context.update(result)
 
             # Step 5: test_writer
             result = await self._run_skill(
-                self._skills[4], task_id, context, benchmark
+                self._skills[4], task_id, context, llm, benchmark
             )
             context.update(result)
 
             # Step 6: test_runner
             result = await self._run_skill(
-                self._skills[5], task_id, context, benchmark
+                self._skills[5], task_id, context, llm, benchmark
             )
             context.update(result)
 
@@ -179,7 +211,7 @@ class Orchestrator:
 
         # Step 7: pr_creator
         result = await self._run_skill(
-            self._skills[6], task_id, context, benchmark
+            self._skills[6], task_id, context, llm, benchmark
         )
         context.update(result)
 
@@ -213,6 +245,8 @@ class Orchestrator:
             "benchmark_summary",
             total_elapsed_ms=task_benchmark.total_elapsed_ms,
             total_elapsed_human=task_benchmark.total_elapsed_human,
+            total_agent_ms=task_benchmark.total_agent_ms,
+            user_wait_ms=task_benchmark.user_wait_ms,
             skills=[s.model_dump() for s in task_benchmark.skills],
             total_input_tokens=task_benchmark.total_input_tokens,
             total_output_tokens=task_benchmark.total_output_tokens,
@@ -230,12 +264,14 @@ class Orchestrator:
         skill: Skill,
         task_id: str,
         context: dict[str, Any],
+        llm: LLMProvider,
         benchmark: BenchmarkTracker,
     ) -> dict[str, Any]:
         """Execute a single skill and return its output."""
+        await self._check_canceled(task_id)
         try:
             return await skill.execute(
-                task_id, context, self._llm, benchmark, self._emitter
+                task_id, context, llm, benchmark, self._emitter
             )
         except SkillError:
             raise
@@ -243,6 +279,26 @@ class Orchestrator:
             raise SkillError(
                 skill.name, f"Unexpected error in {skill.name}: {exc}"
             ) from exc
+
+    async def _check_canceled(self, task_id: str) -> None:
+        """Raise TaskCanceled if the task has been marked CANCELED."""
+        task = await self._state.get_task(task_id)
+        if task and task.get("status") == TaskState.CANCELED.value:
+            raise TaskCanceled(task_id)
+
+    async def _handle_canceled(
+        self, task_id: str, benchmark: BenchmarkTracker
+    ) -> None:
+        """Handle a canceled task: emit event and persist benchmark."""
+        logger.info("Task %s canceled", task_id)
+        elapsed_ms = int((time.monotonic() - benchmark._task_start) * 1000)
+        await self._emitter.emit(
+            task_id,
+            "task_failed",
+            reason="Task canceled by user",
+            elapsed_ms=elapsed_ms,
+        )
+        await benchmark.save(task_id, self._storage)
 
     async def _handle_failure(
         self,

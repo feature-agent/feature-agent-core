@@ -12,9 +12,8 @@ from pathlib import Path
 from typing import Any
 
 from agent.benchmark import BenchmarkTracker
-from agent.config import settings
 from agent.event_emitter import EventEmitter
-from agent.llm_client import LLMClient
+from agent.llm import LLMProvider
 from agent.skill_base import Skill, SkillError
 
 logger = logging.getLogger(__name__)
@@ -29,7 +28,7 @@ class TestRunnerSkill(Skill):
         self,
         task_id: str,
         context: dict[str, Any],
-        llm: LLMClient,
+        llm: LLMProvider,
         benchmark: BenchmarkTracker,
         emitter: EventEmitter,
     ) -> dict[str, Any]:
@@ -45,26 +44,39 @@ class TestRunnerSkill(Skill):
             # Clone fresh copy
             tmp_dir = tempfile.mkdtemp(prefix="agent_test_")
             repo_dir = os.path.join(tmp_dir, "repo")
-            clone_url = f"https://x-access-token:{settings.GITHUB_TOKEN}@github.com/{target_repo}.git"
+            github_token = context.get("github_token", "")
+            clone_url = f"https://x-access-token:{github_token}@github.com/{target_repo}.git"
 
             subprocess.run(
-                ["git", "clone", "--depth", "1", clone_url, repo_dir],
+                ["git", "clone", "--depth", "1", "--branch", "main", clone_url, repo_dir],
                 capture_output=True, text=True, check=True,
             )
 
             repo_path = Path(repo_dir)
 
-            # Apply code changes
-            for change in code_changes:
-                file_path = repo_path / change["path"]
-                file_path.parent.mkdir(parents=True, exist_ok=True)
-                file_path.write_text(change["new_content"])
-
-            # Apply test changes
-            for change in test_changes:
-                file_path = repo_path / change["path"]
-                file_path.parent.mkdir(parents=True, exist_ok=True)
-                file_path.write_text(change["new_content"])
+            from agent.utils.file_changes import apply_changes, ApplyChangesError
+            try:
+                apply_changes(repo_path, code_changes)
+                apply_changes(repo_path, test_changes)
+            except ApplyChangesError as exc:
+                # Treat as a test failure so the retry loop can try again
+                # with the error as feedback to the LLM.
+                benchmark.end_skill(self.name, "failed")
+                await self._emit_log(task_id, emitter, f"Edit apply failed: {exc}")
+                return {
+                    "test_results": {
+                        "passed": False,
+                        "output": (
+                            f"Edit could not be applied: {exc}\n"
+                            "The old_string in one of your edits did not match the "
+                            "current file content. Re-check which file actually contains "
+                            "the failing assertion, and provide an old_string that exists "
+                            "verbatim in that file."
+                        ),
+                        "passed_count": 0,
+                        "total_tests": 0,
+                    }
+                }
 
             # Install requirements
             req_file = repo_path / "requirements.txt"

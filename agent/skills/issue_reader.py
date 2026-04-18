@@ -8,7 +8,7 @@ from typing import Any
 
 from agent.benchmark import BenchmarkTracker
 from agent.event_emitter import EventEmitter
-from agent.llm_client import LLMClient
+from agent.llm import LLMProvider
 from agent.skill_base import Skill, SkillError
 
 logger = logging.getLogger(__name__)
@@ -38,7 +38,7 @@ class IssueReaderSkill(Skill):
         self,
         task_id: str,
         context: dict[str, Any],
-        llm: LLMClient,
+        llm: LLMProvider,
         benchmark: BenchmarkTracker,
         emitter: EventEmitter,
     ) -> dict[str, Any]:
@@ -95,14 +95,13 @@ class IssueReaderSkill(Skill):
         """Fetch issue content from GitHub."""
         from github import Github
 
-        from agent.config import settings
-
         match = re.match(r"https://github\.com/([^/]+)/([^/]+)/issues/(\d+)", url)
         if not match:
             raise SkillError(self.name, f"Invalid GitHub issue URL: {url}")
 
+        github_token = context.get("github_token", "")
         owner, repo, number = match.group(1), match.group(2), int(match.group(3))
-        g = Github(settings.GITHUB_TOKEN)
+        g = Github(github_token)
         gh_repo = g.get_repo(f"{owner}/{repo}")
         issue = gh_repo.get_issue(number)
 

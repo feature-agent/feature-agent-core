@@ -7,12 +7,22 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from agent.config import settings
 from agent.event_emitter import EventEmitter
+from agent.orchestrator import Orchestrator
+from agent.queue.consumer import TaskConsumer
 from agent.queue.nats_client import NATSClient
+from agent.skills.issue_reader import IssueReaderSkill
+from agent.skills.clarifier import ClarifierSkill
+from agent.skills.codebase_explorer import CodebaseExplorerSkill
+from agent.skills.code_writer import CodeWriterSkill
+from agent.skills.test_writer import TestWriterSkill
+from agent.skills.test_runner import TestRunnerSkill
+from agent.skills.pr_creator import PRCreatorSkill
 from agent.state_manager import StateManager
 from agent.storage.local_volume import LocalVolumeStorage
 
@@ -28,6 +38,7 @@ event_emitter = EventEmitter(state_manager)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application startup and shutdown."""
+    consumer = None
     try:
         await nats_client.connect()
         await nats_client.ensure_stream(
@@ -35,8 +46,28 @@ async def lifespan(app: FastAPI):
             [settings.NATS_TASK_SUBJECT],
         )
         logger.info("NATS connected and stream configured")
+
+        # Build skill pipeline and orchestrator
+        skills = [
+            IssueReaderSkill(),
+            ClarifierSkill(),
+            CodebaseExplorerSkill(),
+            CodeWriterSkill(),
+            TestWriterSkill(),
+            TestRunnerSkill(),
+            PRCreatorSkill(),
+        ]
+        orchestrator = Orchestrator(skills, state_manager, event_emitter, storage)
+
+        # Start consumer
+        consumer = TaskConsumer(
+            nats_client, state_manager, orchestrator, settings.NATS_TASK_SUBJECT
+        )
+        await consumer.start()
+        logger.info("Task consumer started — agent is ready")
+
     except ConnectionError:
-        logger.warning("NATS not available — running without queue")
+        logger.warning("NATS not available — running without queue (tasks will not be processed)")
 
     yield
 
@@ -52,6 +83,14 @@ app = FastAPI(
     description="Backend brain of an autonomous AI coding agent",
     version="1.0.0",
     lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:8080"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 

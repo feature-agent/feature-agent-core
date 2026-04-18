@@ -9,7 +9,7 @@ import pytest
 
 from agent.benchmark import BenchmarkTracker
 from agent.event_emitter import EventEmitter
-from agent.llm_client import LLMClient, LLMResponse
+from agent.llm import LLMProvider, LLMResponse
 from agent.skills.clarifier import ClarifierSkill
 from agent.skills.code_writer import CodeWriterSkill
 from agent.skills.issue_reader import IssueReaderSkill
@@ -21,7 +21,7 @@ from agent.storage.local_volume import LocalVolumeStorage
 @pytest.fixture
 def llm():
     """Mock LLM client."""
-    mock = MagicMock(spec=LLMClient)
+    mock = MagicMock(spec=LLMProvider)
     mock.call = AsyncMock()
     mock.parse_json = AsyncMock()
     return mock

@@ -34,3 +34,6 @@ class EFSStorage(StorageInterface):
 
     async def exists(self, key: str) -> bool:
         raise NotImplementedError("EFSStorage: swap implementation here")
+
+    async def delete(self, key: str) -> None:
+        raise NotImplementedError("EFSStorage: swap implementation here")
