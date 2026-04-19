@@ -13,8 +13,16 @@ from agent.llm.base import LLMError, LLMProvider, LLMResponse
 
 logger = logging.getLogger(__name__)
 
-MODEL = "claude-opus-4-7"
+DEFAULT_MODEL = "claude-sonnet-4-5-20250514"
 RETRY_DELAY_SECONDS = 2.0
+
+# Model aliases — skills request a tier, provider maps to a concrete model.
+# "fast" = cheapest for simple tasks, "default" = balanced, "powerful" = best reasoning.
+MODEL_ALIASES: dict[str, str] = {
+    "fast": "claude-haiku-4-5-20251001",
+    "default": "claude-sonnet-4-5-20250514",
+    "powerful": "claude-sonnet-4-5-20250514",
+}
 
 
 class AnthropicProvider(LLMProvider):
@@ -26,13 +34,21 @@ class AnthropicProvider(LLMProvider):
             raise ValueError("credentials must include 'anthropic_api_key'")
         self._client = anthropic.Anthropic(api_key=api_key)
 
+    def _resolve_model(self, model: str | None) -> str:
+        """Resolve a model alias or explicit ID to a concrete model ID."""
+        if model is None:
+            return DEFAULT_MODEL
+        return MODEL_ALIASES.get(model, model)
+
     async def call(
         self,
         system: str,
         user: str,
         use_cache: bool = True,
+        max_tokens: int = 4096,
+        model: str | None = None,
     ) -> LLMResponse:
-        """Call Claude. Retries once on failure."""
+        """Call Claude. Pass model='fast' for cheap tasks, or a full model ID."""
         if use_cache:
             system_messages = [
                 {
@@ -47,10 +63,11 @@ class AnthropicProvider(LLMProvider):
         for attempt in range(2):
             try:
                 start = time.monotonic()
+                resolved_model = self._resolve_model(model)
                 response = await asyncio.to_thread(
                     self._client.messages.create,
-                    model=MODEL,
-                    max_tokens=16384,
+                    model=resolved_model,
+                    max_tokens=max_tokens,
                     system=system_messages,
                     messages=[{"role": "user", "content": user}],
                 )

@@ -63,9 +63,11 @@ class CodebaseExplorerSkill(Skill):
             )
             await self._emit_progress(task_id, emitter, f"Cloned {target_repo}")
 
-            # Build file tree and compressed contents
+            # Build file tree and compressed contents with token budget
+            MAX_CONTENT_CHARS = 32000  # ~8000 tokens budget for file contents
             file_tree = []
             compressed_contents = {}
+            total_chars = 0
             repo_path = Path(repo_dir)
 
             for py_file in sorted(repo_path.rglob("*.py")):
@@ -76,13 +78,24 @@ class CodebaseExplorerSkill(Skill):
 
                 lines = py_file.read_text(errors="replace").split("\n")
                 if len(lines) <= 100:
-                    compressed_contents[rel_path] = "\n".join(lines)
+                    compressed = "\n".join(lines)
                 else:
                     head = "\n".join(lines[:50])
                     tail = "\n".join(lines[-10:])
-                    compressed_contents[rel_path] = (
+                    compressed = (
                         f"{head}\n... ({len(lines) - 60} more lines) ...\n{tail}"
                     )
+
+                entry_chars = len(rel_path) + len(compressed) + 10
+                if total_chars + entry_chars > MAX_CONTENT_CHARS:
+                    await self._emit_log(
+                        task_id, emitter,
+                        f"Token budget reached at {len(compressed_contents)} files, "
+                        f"{len(file_tree)} total in tree"
+                    )
+                    break
+                compressed_contents[rel_path] = compressed
+                total_chars += entry_chars
 
             # Ask Claude to identify relevant files
             contents_str = "\n\n".join(
@@ -98,6 +111,7 @@ class CodebaseExplorerSkill(Skill):
                     f"File contents:\n{contents_str}\n\n"
                     "Find relevant files. Return JSON only."
                 ),
+                max_tokens=2048,
             )
             benchmark.record_llm_call(self.name, response, "Identify relevant files")
 

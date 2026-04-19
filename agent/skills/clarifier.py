@@ -72,6 +72,8 @@ class ClarifierSkill(Skill):
                     f"Requirements: {requirement.get('requirements', [])}\n\n"
                     "Identify ambiguities. Return JSON only."
                 ),
+                max_tokens=1024,
+                model="fast",
             )
             benchmark.record_llm_call(self.name, response, "Analyze requirement clarity")
 

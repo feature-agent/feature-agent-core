@@ -149,6 +149,21 @@ See feature-agent-client repo.
 
 See [CLAUDE.md](CLAUDE.md) for full architecture documentation.
 
+## Cost & Performance Optimizations
+
+The agent routes each skill to the smallest-capable model and limits how much context each call has to carry. Concretely:
+
+- **Model tiering.** Providers expose three aliases: `fast` (Haiku 4.5), `default` (Sonnet 4.5), `powerful` (Sonnet 4.5, reserved for a future Opus swap). Skills pick a tier per call.
+  - `issue_reader` and `clarifier` run on `fast` — short structured-JSON tasks.
+  - `code_writer` and `test_writer` run on `default` with `max_tokens=8192`.
+  - The JSON self-correction retry in `LLMProvider.parse_json` runs on `fast`.
+- **Per-model pricing.** `agent/benchmark.py` carries rates for Sonnet, Haiku, and Opus families. Each LLM call is costed using the model actually used; totals are summed per-call rather than via a single flat rate.
+- **Token budgets.** `codebase_explorer` caps compressed file contents at ~32KB (≈8K tokens) before prompting the LLM, stopping early once the budget is reached.
+- **Tight retry prompts.** When `code_writer` retries after a test failure, it sends only the prior change summary and the test output — the full codebase context is not re-sent, since the model already saw it on the first attempt.
+- **Per-call `max_tokens`.** `LLMProvider.call` takes a `max_tokens` argument so each skill requests only what it needs instead of a blanket 16K ceiling.
+
+Net effect: the cheap, repetitive skills run on Haiku, the generation-heavy skills stay on Sonnet, retries don't duplicate context, and benchmark numbers reflect the real per-model cost.
+
 ## Scaling Limitations
 
 This system processes one task at a time. The agent worker is a single consumer on the NATS queue. Concurrent tasks are queued and processed serially.

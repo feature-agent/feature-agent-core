@@ -30,6 +30,8 @@ class ConcreteProvider(LLMProvider):
         system: str,
         user: str,
         use_cache: bool = True,
+        max_tokens: int = 4096,
+        model: str | None = None,
     ) -> LLMResponse:
         if not self._responses:
             raise LLMError("No more pre-configured responses")
@@ -253,7 +255,7 @@ class TestBedrockProvider:
         assert result.input_tokens == 50
         assert result.output_tokens == 25
         assert result.cached_tokens == 0
-        assert result.model == "anthropic.claude-opus-4-5-20250514-v1:0"
+        assert result.model == "anthropic.claude-sonnet-4-5-20250514-v1:0"
 
     @pytest.mark.asyncio
     async def test_uses_converse_api_with_correct_params(self) -> None:
@@ -264,7 +266,7 @@ class TestBedrockProvider:
 
         await provider.call(system="sys", user="usr")
         call_kwargs = mock_client.converse.call_args.kwargs
-        assert call_kwargs["modelId"] == "anthropic.claude-opus-4-5-20250514-v1:0"
+        assert call_kwargs["modelId"] == "anthropic.claude-sonnet-4-5-20250514-v1:0"
         assert call_kwargs["inferenceConfig"]["temperature"] == 0.0
         assert call_kwargs["inferenceConfig"]["topP"] == 1.0
         assert call_kwargs["inferenceConfig"]["maxTokens"] == 4096

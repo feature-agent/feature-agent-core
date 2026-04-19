@@ -13,8 +13,14 @@ from agent.llm.base import LLMError, LLMProvider, LLMResponse
 
 logger = logging.getLogger(__name__)
 
-MODEL_ID = "anthropic.claude-opus-4-5-20250514-v1:0"
+DEFAULT_MODEL_ID = "anthropic.claude-sonnet-4-5-20250514-v1:0"
 RETRY_DELAY_SECONDS = 2.0
+
+MODEL_ALIASES: dict[str, str] = {
+    "fast": "anthropic.claude-haiku-4-5-20251001-v1:0",
+    "default": "anthropic.claude-sonnet-4-5-20250514-v1:0",
+    "powerful": "anthropic.claude-sonnet-4-5-20250514-v1:0",
+}
 
 
 class BedrockProvider(LLMProvider):
@@ -35,19 +41,28 @@ class BedrockProvider(LLMProvider):
 
         self._client = boto3.client("bedrock-runtime", **session_kwargs)
 
+    def _resolve_model(self, model: str | None) -> str:
+        """Resolve a model alias or explicit ID to a Bedrock model ID."""
+        if model is None:
+            return DEFAULT_MODEL_ID
+        return MODEL_ALIASES.get(model, model)
+
     async def call(
         self,
         system: str,
         user: str,
         use_cache: bool = True,
+        max_tokens: int = 4096,
+        model: str | None = None,
     ) -> LLMResponse:
         """Call Bedrock converse API with temperature=0.0, topP=1.0. Retries once."""
+        resolved_model = self._resolve_model(model)
         for attempt in range(2):
             try:
                 start = time.monotonic()
                 response = await asyncio.to_thread(
                     self._client.converse,
-                    modelId=MODEL_ID,
+                    modelId=resolved_model,
                     system=[{"text": system}],
                     messages=[
                         {
@@ -58,7 +73,7 @@ class BedrockProvider(LLMProvider):
                     inferenceConfig={
                         "temperature": 0.0,
                         "topP": 1.0,
-                        "maxTokens": 4096,
+                        "maxTokens": max_tokens,
                     },
                 )
                 elapsed_ms = int((time.monotonic() - start) * 1000)
@@ -72,7 +87,7 @@ class BedrockProvider(LLMProvider):
                     output_tokens=usage["outputTokens"],
                     cached_tokens=0,
                     elapsed_ms=elapsed_ms,
-                    model=MODEL_ID,
+                    model=resolved_model,
                 )
             except Exception as exc:
                 if attempt == 0:

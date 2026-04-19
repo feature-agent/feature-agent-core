@@ -98,29 +98,20 @@ class CodeWriterSkill(Skill):
                 for a in answers:
                     qa_pairs += f"Q: {a.get('question', '')}\nA: {a.get('answer', '')}\n\n"
 
-            # Format relevant files
-            relevant_files_str = ""
-            for f in codebase.get("relevant_files", []):
-                relevant_files_str += f"\n--- {f['path']} ---\n{f['content']}\n"
-
-            user_prompt = (
-                f"Implement this feature:\n"
-                f"Title: {requirement.get('title', '')}\n"
-                f"Requirements: {requirement.get('requirements', [])}\n"
-                f"Acceptance criteria: {requirement.get('acceptance_criteria', [])}\n\n"
-                f"Clarifications:\n{qa_pairs}\n"
-                f"Codebase architecture:\n{codebase.get('architecture_summary', '')}\n\n"
-                f"Relevant files:\n{relevant_files_str}\n"
-            )
-
             if iteration > 0 and test_failure:
+                # Retry: send only prior changes + test failure, not full file contents again.
+                # The LLM already saw the codebase on the first call.
                 prior_changes = context.get("code_changes", [])
                 prior_summary = "\n".join(
                     f"- {c.get('path', '')} [{c.get('operation', 'create')}]: {c.get('change_summary', '')}"
                     for c in prior_changes
                 )
-                user_prompt += (
-                    f"\nYour PREVIOUS attempt touched these files (already applied, then tests ran):\n"
+                user_prompt = (
+                    f"Feature: {requirement.get('title', '')}\n"
+                    f"Requirements: {requirement.get('requirements', [])}\n"
+                    f"Acceptance criteria: {requirement.get('acceptance_criteria', [])}\n\n"
+                    f"Codebase architecture:\n{codebase.get('architecture_summary', '')}\n\n"
+                    f"Your PREVIOUS attempt touched these files (already applied, then tests ran):\n"
                     f"{prior_summary}\n\n"
                     f"Tests reported:\n{test_failure}\n\n"
                     "ITERATE: return a NEW file_changes list that keeps your prior fixes intact and "
@@ -128,11 +119,26 @@ class CodeWriterSkill(Skill):
                     "that weren't related to the failure.\n"
                     "NOT NULL / required-column errors are almost always fixture-level — include "
                     "the fixture file in edits if so.\n"
+                    "\nReturn complete file contents. JSON only."
+                )
+            else:
+                # First attempt: send full codebase context
+                relevant_files_str = ""
+                for f in codebase.get("relevant_files", []):
+                    relevant_files_str += f"\n--- {f['path']} ---\n{f['content']}\n"
+
+                user_prompt = (
+                    f"Implement this feature:\n"
+                    f"Title: {requirement.get('title', '')}\n"
+                    f"Requirements: {requirement.get('requirements', [])}\n"
+                    f"Acceptance criteria: {requirement.get('acceptance_criteria', [])}\n\n"
+                    f"Clarifications:\n{qa_pairs}\n"
+                    f"Codebase architecture:\n{codebase.get('architecture_summary', '')}\n\n"
+                    f"Relevant files:\n{relevant_files_str}\n"
+                    "\nReturn complete file contents. JSON only."
                 )
 
-            user_prompt += "\nReturn complete file contents. JSON only."
-
-            response = await llm.call(system=SYSTEM_PROMPT, user=user_prompt)
+            response = await llm.call(system=SYSTEM_PROMPT, user=user_prompt, max_tokens=8192)
             benchmark.record_llm_call(self.name, response, "Write code changes")
 
             result = await llm.parse_json(response.content)

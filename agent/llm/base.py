@@ -44,8 +44,10 @@ class LLMProvider(ABC):
         system: str,
         user: str,
         use_cache: bool = True,
+        max_tokens: int = 4096,
+        model: str | None = None,
     ) -> LLMResponse:
-        """Call the LLM. Must be implemented by each provider."""
+        """Call the LLM. Pass model to override the provider default."""
         ...
 
     async def parse_json(
@@ -67,6 +69,8 @@ class LLMProvider(ABC):
                 system="You are a JSON correction assistant. Return ONLY valid JSON with no explanation, no markdown, no code fences.",
                 user=f"Your previous response was not valid JSON. Return ONLY the JSON object with no explanation, no markdown, no code fences.\n\nPrevious response:\n{response_text}\n\n{correction_context}",
                 use_cache=False,
+                max_tokens=2048,
+                model="fast",
             )
             cleaned = self._strip_markdown_fences(correction.content)
             return json.loads(cleaned)

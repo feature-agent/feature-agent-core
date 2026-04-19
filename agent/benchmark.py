@@ -14,9 +14,23 @@ from agent.storage.interface import StorageInterface
 
 logger = logging.getLogger(__name__)
 
-COST_INPUT_PER_TOKEN = 0.000015
-COST_OUTPUT_PER_TOKEN = 0.000075
-COST_CACHED_PER_TOKEN = 0.0000015
+# Per-token cost rates by model family.
+# Key prefix is matched against the model string returned by the API.
+COST_RATES: dict[str, dict[str, float]] = {
+    "claude-sonnet-4": {"input": 0.000003, "output": 0.000015, "cached": 0.0000003},
+    "claude-haiku-4":  {"input": 0.0000008, "output": 0.000004, "cached": 0.00000008},
+    "claude-opus-4":   {"input": 0.000015, "output": 0.000075, "cached": 0.0000015},
+}
+# Fallback if model doesn't match any known prefix
+DEFAULT_COST = {"input": 0.000003, "output": 0.000015, "cached": 0.0000003}
+
+
+def _get_rates(model: str) -> dict[str, float]:
+    """Look up cost rates by model name prefix."""
+    for prefix, rates in COST_RATES.items():
+        if prefix in model:
+            return rates
+    return DEFAULT_COST
 
 
 class LLMCallBenchmark(BaseModel):
@@ -72,12 +86,15 @@ class TaskBenchmark(BaseModel):
     fastest_skill: str
 
 
-def _calculate_cost(input_tokens: int, output_tokens: int, cached_tokens: int) -> float:
-    """Calculate estimated cost from token counts."""
+def _calculate_cost(
+    input_tokens: int, output_tokens: int, cached_tokens: int, model: str = ""
+) -> float:
+    """Calculate estimated cost from token counts, using model-specific rates."""
+    rates = _get_rates(model)
     return (
-        (input_tokens - cached_tokens) * COST_INPUT_PER_TOKEN
-        + output_tokens * COST_OUTPUT_PER_TOKEN
-        + cached_tokens * COST_CACHED_PER_TOKEN
+        (input_tokens - cached_tokens) * rates["input"]
+        + output_tokens * rates["output"]
+        + cached_tokens * rates["cached"]
     )
 
 
@@ -122,7 +139,13 @@ class BenchmarkTracker:
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             cached_tokens=cached_tokens,
-            estimated_cost_usd=round(_calculate_cost(input_tokens, output_tokens, cached_tokens), 6),
+            estimated_cost_usd=round(
+                sum(
+                    _calculate_cost(c.input_tokens, c.output_tokens, c.cached_tokens, c.model)
+                    for c in llm_calls
+                ) if llm_calls else 0.0,
+                6,
+            ),
             status=status,
             retry_count=retry_count,
         ))
@@ -189,7 +212,7 @@ class BenchmarkTracker:
             total_input_tokens=total_input,
             total_output_tokens=total_output,
             total_cached_tokens=total_cached,
-            estimated_total_cost_usd=round(_calculate_cost(total_input, total_output, total_cached), 6),
+            estimated_total_cost_usd=round(sum(s.estimated_cost_usd for s in self._skills), 6),
             pr_url=pr_url,
             pr_number=pr_number,
             slowest_skill=slowest,

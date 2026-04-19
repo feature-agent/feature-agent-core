@@ -59,6 +59,8 @@ class IssueReaderSkill(Skill):
             response = await llm.call(
                 system=SYSTEM_PROMPT,
                 user=f"Structure this feature request:\n{raw_content}",
+                max_tokens=2048,
+                model="fast",
             )
             benchmark.record_llm_call(self.name, response, "Structure feature request")
 

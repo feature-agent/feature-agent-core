@@ -77,6 +77,7 @@ class TestWriterSkill(Skill):
                     f"Test fixtures available:\n{conftest}\n\n"
                     "Write comprehensive tests. JSON only."
                 ),
+                max_tokens=8192,
             )
             benchmark.record_llm_call(self.name, response, "Write tests")
 
